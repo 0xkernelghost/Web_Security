@@ -5,36 +5,36 @@
 
 ---
 
-### Where I Found Vulnerability ?
+### Where I Found Vulnerability?
 - **URL:** `/product?productId=2`
 - **Parameter:** `stockApi`
-- **Hidden Feature:** "Next Product" button — yahan open redirect tha
-- **Defense:** Server sirf same-origin (relative) URLs allow karta tha `stockApi` mein — direct internal IPs blocked the
+- **Hidden Feature:** "Next Product" button — this had an open redirect
+- **Defense:** The server only allowed same-origin (relative) URLs in `stockApi` — direct internal IPs were blocked
 
 ---
 
-### Steps ?
+### Steps?
 
-1. Product page pe **Check Stock** button click karo, Burp mein intercept karo
-2. `stockApi` parameter dikhe ga — yahan direct `http://192.168.0.12:8080/admin` dalne se blocked hoga
-3. Ab **Next Product** button ka request intercept karo
-4. Notice karo us request ka format:
+1. Click the **Check Stock** button on the product page, intercept in Burp
+2. The `stockApi` parameter will be visible — entering a direct `http://192.168.0.12:8080/admin` here gets blocked
+3. Now intercept the **Next Product** button's request
+4. Notice the format of that request:
    ```
    GET /product/nextProduct?currentProductId=2&path=/product?productId=3
    ```
-5. Yahan `path` parameter open redirect hai — yeh kisi bhi URL pe redirect kar sakta hai
-6. Ab `stockApi` mein yeh open redirect use karo aur `path` ko internal admin URL pe point karo:
+5. Here the `path` parameter is an open redirect — it can redirect to any URL
+6. Now use this open redirect in `stockApi` and point `path` to the internal admin URL:
    ```
    stockApi=/product/nextProduct?currentProductId=2&path=http://192.168.0.12:8080/admin
    ```
-7. Admin panel mil gaya ✅ — Carlos ka delete link dhundo
-8. Final delete payload bhejo → Lab solved ✅
+7. Got the admin panel ✅ — find Carlos's delete link
+8. Send the final delete payload → Lab solved ✅
 
 ---
 
-### Working Payloads ?
+### Working Payloads?
 
-**Blocked (Direct internal IP nahi chali):**
+**Blocked (Direct internal IP didn't work):**
 ```
 stockApi=http://192.168.0.12:8080/admin     ← Direct internal IP blocked
 stockApi=http://localhost/admin              ← localhost blocked
@@ -52,14 +52,14 @@ stockApi=/product/nextProduct?currentProductId=2&path=http://192.168.0.12:8080/a
 
 ---
 
-### Why it Worked ?
+### Why it Worked?
 
-**Open Redirect = SSRF ka backdoor:**
-- Server ne `stockApi` mein direct external/internal IPs block ki thi
-- Lekin server ne apne **khud ke relative URLs** ko trust kiya — same origin toh safe hai na?
-- `/product/nextProduct` ek legitimate endpoint tha — server ne ise allow kar diya
-- Us endpoint ka `path` parameter **kisi bhi URL pe redirect** kar sakta tha — yahi vulnerability thi
-- Server ne redirect follow kiya → internal `192.168.0.12:8080` pe pohonch gaya → SSRF success ✅
+**Open Redirect = SSRF's backdoor:**
+- The server had blocked direct external/internal IPs in `stockApi`
+- But the server trusted its **own relative URLs** — same origin is safe, right?
+- `/product/nextProduct` was a legitimate endpoint — the server allowed it
+- That endpoint's `path` parameter could **redirect to any URL** — that was the vulnerability
+- The server followed the redirect → reached the internal `192.168.0.12:8080` → SSRF success ✅
 
 ```
 Normal SSRF attempt:
@@ -77,14 +77,14 @@ Open Redirect bypass:
 
 ---
 
-### What I Learned ?
+### What I Learned?
 
-- **Open Redirect + SSRF = Powerful combo** — Ek vulnerability doosri ko bypass karne mein help karti hai
-- Agar application ke andar koi bhi open redirect endpoint ho, woh SSRF filter bypass ke liye use ho sakta hai
-- Server jo apne **khud ke endpoints pe trust karta hai**, woh open redirect ke through exploit ho sakta hai
-- `path`, `url`, `redirect`, `next`, `return` — yeh parameters hamesha open redirect ke liye check karne chahiye
+- **Open Redirect + SSRF = Powerful combo** — one vulnerability helps bypass another
+- If an application has any open redirect endpoint inside it, it can be used to bypass an SSRF filter
+- A server that **trusts its own endpoints** can be exploited through an open redirect
+- `path`, `url`, `redirect`, `next`, `return` — these parameters should always be checked for open redirect
 
-**Open Redirect dhundhne ke tips:**
+**Tips for finding Open Redirect:**
 ```
 /product/nextProduct?path=         ← path parameter
 /login?redirect=                   ← redirect parameter
@@ -93,12 +93,12 @@ Open Redirect bypass:
 ```
 
 --
-### SSRF Defense — What Should Developers Do ?
+### SSRF Defense — What Should Developers Do?
 
 | Defense | Effective? | Notes |
 |---------|-----------|-------|
 | Blacklist IPs/keywords | ❌ Weak | Easily bypassed (Lab 4) |
 | Allow only relative URLs | ❌ Weak | Open redirect can chain it (Lab 5) |
-| **Whitelist allowed domains** | ✅ Strong | Only specific trusted URLs allow karo |
-| **Disable unnecessary redirects** | ✅ Strong | Server-side redirects follow na kare |
-| **Network-level block** | ✅ Strong | Internal IPs ko firewall se block karo |
+| **Whitelist allowed domains** | ✅ Strong | Only allow specific trusted URLs |
+| **Disable unnecessary redirects** | ✅ Strong | Server-side should not follow redirects |
+| **Network-level block** | ✅ Strong | Block internal IPs via firewall |
