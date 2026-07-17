@@ -20,5 +20,5 @@
 7. - #### solve the lab..... ![alt text](image-4.png)
 
 
-## Check `poc.py` for automate attack
+## Check `poc.py` for automate attack and .sh and .ps1 exprimental they work exactly like python POC
 
