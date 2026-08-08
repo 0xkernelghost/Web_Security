@@ -50,4 +50,10 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ⭐ If this repo helped you, consider giving it a star!
 
+<br>
+
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=16&pause=1000&color=E74C3C&center=true&vCenter=true&width=500&lines=Thanks+for+stopping+by!+%E2%AD%90;Happy+Hacking+%F0%9F%94%93" alt="Typing SVG Footer" />
+
+![Made with](https://img.shields.io/badge/Made%20with-%E2%9D%A4-red?style=flat-square)
+
 </div>
