@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:1e1e2f,100:c0392b&height=200&section=header&text=Web_Security&fontSize=55&fontColor=ffffff&animation=fadeIn&desc=Writeups%20%26%20PoCs%20for%20Web%20Application%20Vulnerabilities&descAlignY=65&descSize=18" />
+# 🛡️ Web_Security
 
-<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=20&pause=1000&color=E74C3C&center=true&vCenter=true&width=600&lines=Breaking+things+to+understand+them+better+%F0%9F%94%93;PortSwigger+Web+Security+Academy+Writeups;SQLi+%7C+XSS+%7C+CSRF+%7C+SSRF+%7C+Path+Traversal" alt="Typing SVG" />
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=20&pause=1000&color=E74C3C&center=true&vCenter=true&width=600&lines=Breaking+things+to+understand+them+better+%F0%9F%94%93;PortSwigger+Web+Security+Academy+Writeups;SQLi+%7C+XSS+%7C+CSRF+%7C+SSRF+%7C+etc." alt="Typing SVG" />
 
 <br>
 
@@ -14,6 +14,8 @@
 </div>
 
 <br>
+
+---
 
 ## 📖 About
 
@@ -47,7 +49,5 @@ This project is licensed under the [MIT License](./LICENSE).
 <div align="center">
 
 ⭐ If this repo helped you, consider giving it a star!
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:c0392b,100:1e1e2f&height=100&section=footer" />
 
 </div>
