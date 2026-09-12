@@ -1,6 +1,7 @@
 # 05 – Authentication Vulnerabilities
 
 > **OWASP Top 10:2025 — A07: Authentication Failures**
+> 
 > Lab Platform: PortSwigger Web Security Academy
 
 ---
