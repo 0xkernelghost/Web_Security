@@ -1,6 +1,6 @@
 # 05 – Authentication Vulnerabilities
 
-> **OWASP Top 10 2025 — A07: Identification and Authentication Failures**
+> **OWASP Top 10:2025 — A07: Authentication Failures**
 > Lab Platform: PortSwigger Web Security Academy
 
 ---
@@ -53,15 +53,23 @@ Client  →  Credential Submission  →  Server Validation  →  Session Created
 2. Server looks up user record in database
 3. Server hashes the submitted password and verifies it against the stored hash
 4. On match → session token created and returned to client
-5. Client stores session token (cookie / localStorage)
+5. Client stores the session token, typically in a secure cookie for browser-based sessions
 6. Token is sent with every subsequent request
 7. Server validates token and grants access
 ```
 
+### Browser Token Storage Note
+
+For browser-based applications, avoid storing authentication tokens, session
+IDs, JWTs, or refresh tokens in `localStorage` or `sessionStorage`. These APIs
+are accessible to JavaScript running in the origin, so an XSS vulnerability
+can expose stored credentials. Prefer secure, `HttpOnly`, `Secure` cookies or
+an architecture such as a Backend-for-Frontend (BFF) where appropriate.
+
 ### Password Hashing (Secure)
 
 ```
-User password  →  bcrypt/argon2/scrypt hash  →  stored in DB
+User password  →  Argon2id/bcrypt/PBKDF2 hash  →  stored in DB
                ↑
         salted + iterated (expensive to brute-force)
 ```
@@ -94,7 +102,8 @@ The most common mechanism. User supplies a username and password that the server
 
 Combines two or more factors:
 - **Something you know** — password, PIN, security question
-- **Something you have** — TOTP app, SMS code, hardware key
+- **Something you have** — authenticator app, hardware security key
+- SMS OTP is a weaker possession-like mechanism and has risks such as SIM swapping and phishing
 - **Something you are** — biometrics
 
 **Common weaknesses:**
@@ -105,7 +114,12 @@ Combines two or more factors:
 
 ### 3. Token-Based Authentication
 
-Client stores a stateless token (JWT, API key, OAuth token) and sends it with each request.
+Client stores an authentication or authorization token (for example, a JWT,
+opaque access token, or API key) and sends it with requests as required.
+
+JWTs can be self-contained and commonly support stateless verification, but
+not all tokens are stateless. API keys and OAuth access tokens may be backed
+by server-side state.
 
 **Common weaknesses:**
 - JWT with `alg: none` accepted
@@ -123,13 +137,20 @@ Server issues a session cookie after login. Cookie maps to a server-side session
 - Missing `HttpOnly`, `Secure`, `SameSite` flags
 - Sessions not invalidated on logout
 
-### 5. Single Sign-On (SSO) / OAuth 2.0
+### 5. Single Sign-On (SSO) / OAuth 2.0 / OpenID Connect (OIDC)
 
-Delegated authentication — trust a third-party identity provider (Google, GitHub, etc.)
+OAuth 2.0 is primarily an authorization framework that allows a client
+application to obtain access to protected resources.
+
+OpenID Connect (OIDC) adds an identity layer on top of OAuth 2.0 and is used
+for authentication and federated login.
+
+SSO can be implemented using protocols such as SAML or OIDC, depending on
+the architecture.
 
 **Common weaknesses:**
 - `state` parameter not validated → CSRF
-- `redirect_uri` not restricted → token theft
+- Improperly validated `redirect_uri` → may enable authorization-code or token leakage depending on the OAuth flow and implementation
 - Implicit flow exposing tokens in URL
 
 ---
@@ -176,7 +197,9 @@ Target: POST /login  →  password=§FUZZ§
 
 ```
 remember_me=dXNlcjoxMjM=   → base64("user:123")
-# Attacker changes 123 to 456 to log in as user 456
+# Example of an insecure implementation:
+# if the server trusts a client-controlled user identifier,
+# modifying the value could result in account takeover.
 ```
 
 ---
@@ -189,7 +212,7 @@ remember_me=dXNlcjoxMjM=   → base64("user:123")
 - Token not expiring after use
 - Token predictable (timestamp-based)
 - Host header injection → reset link sent to attacker domain
-- User-supplied email trusted without validation
+- Password-reset requests that allow account identity to be changed or trusted without proper verification
 
 ---
 
@@ -198,9 +221,14 @@ remember_me=dXNlcjoxMjM=   → base64("user:123")
 **What it is:** The authentication flow has multiple steps, and the application trusts that users completed earlier steps without re-validating.
 
 ```
-Step 1: Enter username + password (attacker knows this)
-Step 2: Enter MFA code         (attacker skips directly to this URL)
-Step 3: Logged in as victim    ← Bypassed step 2 via direct URL access
+Step 1: Enter username + password
+Step 2: Enter MFA code
+Step 3: Logged in
+
+Vulnerable implementation:
+Step 1 succeeds → server establishes an authenticated session
+               → protected endpoint does not verify MFA completion
+               → attacker accesses /dashboard without completing MFA
 ```
 
 ---
@@ -210,8 +238,14 @@ Step 3: Logged in as victim    ← Bypassed step 2 via direct URL access
 **What it is:** Session tokens that are predictable, long-lived, or not properly invalidated.
 
 ```
-Session ID:  PHPSESSID=1001   → change to 1002 → different user
-Session ID:  MD5(username+timestamp) → predictable
+Session ID: PHPSESSID=1001
+            ↓
+Attacker modifies the value to another valid/predictable session ID
+            ↓
+If the server accepts it and that ID belongs to another user,
+the attacker may access that user's session.
+
+Session ID: MD5(username+timestamp) → predictable
 ```
 
 ---
@@ -227,7 +261,7 @@ Authorization: Basic YWRtaW46cGFzc3dvcmQ=
 
 Base64 is **NOT encryption** — it is trivially reversible. Credentials are exposed in plaintext without HTTPS.
 
-> **Note on HTTP Digest:** Digest Authentication is different — it uses a challenge-response mechanism (MD5 hash of credentials + server nonce). It does NOT send credentials in base64. However, it is still considered weak and is rarely used in modern applications.
+> **Note on HTTP Digest:** Digest Authentication is different — it uses a challenge-response mechanism (MD5 hash of credentials + server nonce). It does NOT send credentials in base64. However, HTTP Digest Authentication has significant limitations and is rarely used in modern web applications compared with stronger modern authentication mechanisms.
 
 ---
 
@@ -285,16 +319,20 @@ ffuf -u https://target.com/login \
 
 ### Technique 3 — Bypassing IP-Based Rate Limiting
 
-Many applications block repeated failed logins from the same IP. Bypass techniques:
+Many applications block repeated failed logins from the same IP. If the
+application incorrectly trusts attacker-controlled proxy headers, these
+headers may affect the apparent client IP and can sometimes weaken IP-based
+rate limiting.
 
 ```http
-# X-Forwarded-For header spoofing
-X-Forwarded-For: 1.2.3.4        (rotate IPs each request)
+# If the application incorrectly trusts attacker-controlled proxy headers:
+X-Forwarded-For: 1.2.3.4        (test whether the apparent client IP changes)
 
-# X-Real-IP
+# Some deployments may incorrectly trust X-Real-IP:
 X-Real-IP: 10.0.0.1
 
-# Add to Burp Intruder payloads — rotate IP in header
+# Add to Burp Intruder payloads — rotate IP in header and verify whether the
+# application's rate-limit key actually changes
 ```
 
 ```python
@@ -326,10 +364,15 @@ ffuf -u https://target.com/reset?token=FUZZ \
   -w tokens.txt \
   -fc 200
 
-# Step 5: Host header injection
+# Step 5: Host/forwarded-host manipulation test
 POST /forgot-password HTTP/1.1
-Host: attacker.com                   ← server sends reset link to attacker domain
+Host: attacker.com
 email=victim@example.com
+
+# Test whether the application uses an attacker-controlled Host or forwarded
+# host value when constructing the password-reset URL.
+# This succeeds only when the application's reset-link generation trusts
+# attacker-controlled host information.
 ```
 
 ---
@@ -362,8 +405,11 @@ Cookie: remember_me=dXNlcjox
 GET /login → POST credentials → GET /mfa → POST OTP → GET /dashboard
 
 # Attack:
-# After step 1 (valid creds submitted), jump directly to:
-GET /dashboard  → if session cookie was set after step 1, MFA is bypassed
+# After valid credentials are submitted, request a protected endpoint directly:
+GET /dashboard
+
+# MFA is bypassed only if the server treats the pre-MFA session as fully
+# authenticated or fails to enforce MFA completion on protected endpoints.
 ```
 
 ---
@@ -388,7 +434,12 @@ ffuf -u https://target.com/mfa \
 ### Technique 8 — Credential Stuffing
 
 ```bash
-# Use known leaked credential pairs (e.g., from HaveIBeenPwned datasets)
+# Use lawfully obtained/test credential pairs or breach-derived datasets
+# where their use is authorized and appropriate for the assessment.
+#
+# Have I Been Pwned is primarily useful for checking whether credentials or
+# email addresses have appeared in known breaches; it should not be described
+# as a source of downloadable credential-pair dumps.
 
 # Hydra — credential stuffing with user:pass list
 hydra -C leaked_credentials.txt target.com http-post-form \
@@ -420,8 +471,11 @@ Response header: X-OTP-Debug: 123456
 ### Attack 2 — OTP Reuse
 
 ```
-# If OTP is not invalidated after first use
-# Use the same OTP again for a different account
+# If an OTP is not properly invalidated after successful use:
+# Attempt to replay the same OTP for the same authentication transaction/account.
+#
+# Whether an OTP can be reused across accounts depends on how the application
+# binds the OTP to the authentication transaction and account.
 ```
 
 ### Attack 3 — SIM Swapping (out-of-scope for web pentesting)
@@ -431,8 +485,9 @@ Response header: X-OTP-Debug: 123456
 ### Attack 4 — Backup Code Brute Force
 
 ```bash
-# Backup codes are often 6-8 digit numbers
-# If no rate limit:
+# Backup/recovery codes can have different formats and lengths.
+# Test whether they have sufficient entropy, are rate-limited,
+# and are invalidated after successful use.
 ffuf -u https://target.com/recovery \
   -X POST \
   -d "backup_code=FUZZ" \
@@ -442,7 +497,7 @@ ffuf -u https://target.com/recovery \
 ### Attack 5 — TOTP Secret Leakage
 
 ```
-# QR code URL contains the TOTP secret
+# A TOTP provisioning URI/QR code may contain the shared TOTP secret
 otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
 
 # Extract secret and generate valid OTPs on attacker machine:
@@ -477,7 +532,7 @@ hashcat -a 0 -r /usr/share/hashcat/rules/best64.rule \
 john --wordlist=rockyou.txt --rules=KoreLogic hash.txt
 ```
 
-### Online Hash Cracking
+### Password Hash Cracking & Online Hash Lookup
 
 ```bash
 # If you obtain a hash from DB dump or error response:
@@ -529,7 +584,10 @@ Cookie: PHPSESSID=attacker_known_value
 hashcat -a 0 -m 16500 token.jwt /usr/share/wordlists/rockyou.txt
 
 # 4. jwks.json manipulation
-# Point jku/x5u header to attacker-controlled JWKS endpoint
+# Test whether the JWT verifier improperly trusts attacker-controlled
+# jku/x5u key locations.
+# This is exploitable only when the application's key-loading and
+# trust-validation logic is vulnerable.
 ```
 
 ---
@@ -645,7 +703,7 @@ for username in open('usernames.txt'):
     elapsed = time.time() - start
     print(f"{username.strip()}: {elapsed:.3f}s")
 
-# Valid usernames often take longer (DB lookup completes before hash comparison)
+# Timing differences may reveal whether different code paths are taken; measure statistically rather than assuming valid usernames always take longer
 ```
 
 ---
@@ -787,8 +845,9 @@ bcrypt.checkpw(submitted_password.encode(), hashed)
 #### 3. Multi-Factor Authentication
 
 ```
-- Enforce TOTP (Google Authenticator, Authy) over SMS
-- Use hardware keys (FIDO2/WebAuthn) for privileged accounts
+- Prefer phishing-resistant MFA such as FIDO2/WebAuthn where practical
+- Prefer TOTP over SMS when a phishing-resistant method is unavailable
+- Use hardware security keys (FIDO2/WebAuthn) for privileged accounts
 - Apply MFA to: login, password change, email change, high-value actions
 ```
 
@@ -808,8 +867,8 @@ Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
 #### 5. Secure Password Reset
 
 ```
-- Generate cryptographically random tokens (min 128 bits)
-- Token expires after 15-60 minutes
+- Generate cryptographically random, high-entropy reset tokens
+- Use an appropriate short expiry window and invalidate tokens after successful use
 - Token is single-use (invalidate after first use)
 - Send to verified email only
 - Use a short-lived, single-use token; submit it by POST after the reset link is opened
@@ -829,7 +888,7 @@ Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Strict; Path=/
 | Session fixation | New session ID on login | Strict session validation |
 | Weak session ID | CSPRNG session tokens | Burp Sequencer entropy test |
 | JWT none attack | Reject `alg: none` | Pin algorithm server-side |
-| Password storage | bcrypt / argon2id | Min cost factor = 12 |
+| Password storage | Argon2id / bcrypt | Use algorithm-specific parameters tuned to the environment |
 | Remember me abuse | HMAC-signed token | Short expiry + re-auth |
 
 ---
@@ -869,13 +928,13 @@ Recommended Tools:
 Beginner
   ├── Understand HTTP basics (cookies, sessions, headers)
   ├── Learn how login flows work (intercept with Burp)
-  └── PortSwigger: Authentication apprentice labs (1-3)
+  └── PortSwigger: Authentication labs — Apprentice
 
 Intermediate
   ├── Username enumeration techniques (timing, messages)
   ├── Rate limiting bypass (X-Forwarded-For, cluster bomb)
   ├── Password reset token analysis
-  └── PortSwigger: Authentication practitioner labs (4-10)
+  └── PortSwigger: Authentication labs — Practitioner
 
 Advanced
   ├── MFA bypass (session skip, OTP brute force)
@@ -892,4 +951,4 @@ Resources
 
 ---
 
-*Reference: OWASP Top 10 2025 A07 – Identification and Authentication Failures | PortSwigger Authentication Labs | HackTricks Login Bypass*
+*Reference: OWASP Top 10:2025 A07 – Authentication Failures | PortSwigger Web Security Academy – Authentication | OWASP Authentication, Session Management, and Password Storage Cheat Sheets*
